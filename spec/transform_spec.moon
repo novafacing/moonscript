@@ -1,11 +1,128 @@
 
 import with_dev from require "spec.helpers"
 
+
 describe "moonscript.transform.destructure", ->
-  local extract_assign_names
+  local extract_assign_names, split_assign, Block
 
   with_dev ->
-    { :extract_assign_names } = require "moonscript.transform.destructure"
+    { :extract_assign_names, :split_assign } = require "moonscript.transform.destructure"
+    {:Block} = require "moonscript.compile"
+
+  describe "split_assign #fff", ->
+    -- {:hello} = world
+    it "simple assignment", ->
+      node = {
+        "assign"
+        {
+          { "table", {
+              {{"key_literal", "hello"}, {"ref", "hello"}}
+            }
+          }
+        }
+        {
+          {"ref", "world"}
+        }
+      }
+
+      out = split_assign Block!, node
+
+      assert.same { "group", {
+        { "group", {
+          { "declare", { {"ref", "hello"} } }
+          { "assign", { {"ref", "hello"} }, { {"chain", {"ref", "world"}, {"dot", "hello"}} } }
+        }}
+      }}, out
+
+    -- {:a, :b} = world!
+    -- a complex value should never be repeated to avoid double execution
+    it "complex value", ->
+      node = {
+        "assign"
+        {
+          { "table", {
+              {{"key_literal", "a"}, {"ref", "a"}}
+              {{"key_literal", "b"}, {"ref", "b"}}
+            }
+          }
+        }
+        {
+          {"chain", {"ref", "world"}, {"call", {}}}
+        }
+      }
+
+      out = split_assign Block!, node
+
+      -- the temp name the result is stored into
+      tmp = {"temp_name", prefix: "obj"}
+
+      assert.same { "group", {
+        { "group", {
+          { "declare", { {"ref", "a"}, {"ref", "b"} } }
+
+          { "do", {
+            {"assign", { tmp }, { {"chain", {"ref", "world"}, {"call", {}}} } }
+            {"assign", { {"ref", "a"}, {"ref", "b"} }, { {"chain", tmp, {"dot", "a"}}, {"chain", tmp, {"dot", "b"}} } }
+          }}
+        }}
+      }}, out
+
+    -- a, {:hello} = one, two
+    it "multiple assigns", ->
+      node = {
+        "assign"
+        {
+          {"ref", "a"}
+          { "table", {
+              {{"key_literal", "hello"}, {"ref", "hello"}}
+            }
+          }
+        }
+        {
+          {"ref", "one"}
+          {"ref", "two"}
+        }
+      }
+
+      out = split_assign Block!, node
+
+      assert.same { "group", {
+        {"assign", { {"ref", "a"} }, { {"ref", "one"} }}
+
+        { "group", {
+          { "declare", { {"ref", "hello"} } }
+          { "assign", { {"ref", "hello"} }, { {"chain", {"ref", "two"}, {"dot", "hello"}} } }
+        }}
+      }}, out
+
+    -- {:hello}, a = one, two
+    it "multiple assigns swapped", ->
+      node = {
+        "assign"
+        {
+          { "table", {
+              {{"key_literal", "hello"}, {"ref", "hello"}}
+            }
+          }
+          {"ref", "a"}
+        }
+        {
+          {"ref", "one"}
+          {"ref", "two"}
+        }
+      }
+
+      out = split_assign Block!, node
+
+      assert.same { "group", {
+        { "group", {
+          { "declare", { {"ref", "hello"} } }
+          { "assign", { {"ref", "hello"} }, { {"chain", {"ref", "one"}, {"dot", "hello"}} } }
+        }}
+
+        {"assign", { {"ref", "a"} }, { {"ref", "two"} }}
+      }}, out
+
 
   it "extracts names from table destructure", ->
     des = {
